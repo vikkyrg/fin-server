@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
@@ -9,10 +10,34 @@ const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
+const allowedOrigins = [
+  process.env.ADMIN_URL,
+  process.env.CLIENT_URL,
+  ...(process.env.CORS_ORIGINS || '').split(',')
+]
+  .map((origin) => origin && origin.trim())
+  .filter(Boolean)
+  .map((origin) => new URL(origin).origin);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(null, false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+  maxAge: 86400
+};
+
 // Connect to Database
 connectDB();
 
 // Middleware
+app.use(cors(corsOptions));
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
