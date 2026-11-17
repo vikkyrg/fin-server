@@ -1,7 +1,13 @@
 const { Enquiry, LOAN_TYPES, ENQUIRY_STATUSES } = require('../models/Enquiry');
 
 // Validate loan specific details
-const validateLoanDetails = (loanType, loanDetails = {}) => {
+const validateLoanDetails = (loanType, loanDetails = {}, source = 'loandetail') => {
+  // If enquiry originates from Homepage, loan-specific deep verification fields are optional
+  const normSource = String(source || '').toLowerCase();
+  if (normSource === 'homepage') {
+    return [];
+  }
+
   const errors = [];
   switch (loanType) {
     case 'personal-loan':
@@ -36,6 +42,12 @@ const validateLoanDetails = (loanType, loanDetails = {}) => {
     case 'gold-loan':
       if (!loanDetails.approximateGoldWeight) errors.push('Approximate Gold Weight is required');
       break;
+    case 'vehicle-loan':
+      // Vehicle details optional in general enquiry form
+      break;
+    case 'other':
+      // General advisory
+      break;
     default:
       errors.push('Invalid loan category specified');
   }
@@ -43,7 +55,7 @@ const validateLoanDetails = (loanType, loanDetails = {}) => {
 };
 
 // @desc    Submit Loan Enquiry (Public)
-// @route   POST /api/enquiries
+// @route   POST /api/enquiries/submit
 // @access  Public
 const submitEnquiry = async (req, res, next) => {
   try {
@@ -55,21 +67,40 @@ const submitEnquiry = async (req, res, next) => {
       city,
       requiredLoanAmount,
       privacyConsent,
+      source,
+      requirement,
       loanDetails
     } = req.body;
 
+    const validLoanTypes = [...LOAN_TYPES, 'other'];
+
     // Validate common fields
-    if (!loanType || !LOAN_TYPES.includes(loanType)) {
+    if (!loanType || !validLoanTypes.includes(loanType)) {
       return res.status(400).json({
         success: false,
-        message: `Valid loanType is required (${LOAN_TYPES.join(', ')})`
+        message: `Valid loanType is required (${validLoanTypes.join(', ')})`
       });
     }
 
-    if (!fullName || !mobileNumber || !email || !city || !requiredLoanAmount) {
+    if (!fullName || !mobileNumber) {
       return res.status(400).json({
         success: false,
-        message: 'All common enquiry fields (Full Name, Mobile Number, Email, City, Required Amount) are mandatory'
+        message: 'Full Name and Mobile Number are mandatory'
+      });
+    }
+
+    // Default fallbacks for homepage quick enquiries
+    const isHomepage = String(source || '').toLowerCase() === 'homepage';
+    const resolvedEmail = email && email.trim() ? email.trim().toLowerCase() : 'not-provided@finadvise.in';
+    const resolvedCity = city && city.trim() ? city.trim() : (isHomepage ? 'General Enquiry' : '');
+    const resolvedAmount = requiredLoanAmount ? Number(requiredLoanAmount) : 500000;
+    const resolvedSource = isHomepage ? 'homepage' : 'loandetail';
+    const resolvedRequirement = requirement ? requirement.trim() : (loanDetails?.remarks || '');
+
+    if (!resolvedCity && !isHomepage) {
+      return res.status(400).json({
+        success: false,
+        message: 'City is mandatory'
       });
     }
 
@@ -82,24 +113,24 @@ const submitEnquiry = async (req, res, next) => {
       });
     }
 
-    // Validate email format
+    // Validate email format if provided
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
+    if (resolvedEmail !== 'not-provided@finadvise.in' && !emailRegex.test(resolvedEmail)) {
       return res.status(400).json({
         success: false,
         message: 'Please enter a valid email address'
       });
     }
 
-    if (!privacyConsent) {
+    if (privacyConsent === false) {
       return res.status(400).json({
         success: false,
         message: 'You must agree to the privacy policy to submit your enquiry'
       });
     }
 
-    // Validate loan-specific fields
-    const loanDetailErrors = validateLoanDetails(loanType, loanDetails);
+    // Validate loan-specific fields (bypassed if source === 'Homepage')
+    const loanDetailErrors = validateLoanDetails(loanType, loanDetails, resolvedSource);
     if (loanDetailErrors.length > 0) {
       return res.status(400).json({
         success: false,
@@ -113,13 +144,14 @@ const submitEnquiry = async (req, res, next) => {
     const existingRecent = await Enquiry.findOne({
       mobileNumber: mobileNumber.trim(),
       loanType,
+      source: resolvedSource,
       createdAt: { $gte: tenMinutesAgo }
     });
 
     if (existingRecent) {
       return res.status(429).json({
         success: false,
-        message: 'We already received your enquiry for this loan product recently. Our loan advisor will contact you shortly.'
+        message: 'We already received your enquiry recently. Our loan advisor will contact you shortly.'
       });
     }
 
@@ -127,11 +159,15 @@ const submitEnquiry = async (req, res, next) => {
       loanType,
       fullName: fullName.trim(),
       mobileNumber: mobileNumber.trim(),
-      email: email.trim().toLowerCase(),
-      city: city.trim(),
-      requiredLoanAmount: Number(requiredLoanAmount),
-      privacyConsent: Boolean(privacyConsent),
-      loanDetails: loanDetails || {}
+      email: resolvedEmail,
+      city: resolvedCity,
+      requiredLoanAmount: resolvedAmount,
+      privacyConsent: privacyConsent !== false,
+      source: resolvedSource,
+      requirement: resolvedRequirement,
+      loanDetails: loanDetails || {},
+      isRead: false,
+      readAt: null
     });
 
     res.status(201).json({
@@ -140,7 +176,111 @@ const submitEnquiry = async (req, res, next) => {
       data: {
         enquiryId: newEnquiry.enquiryId,
         loanType: newEnquiry.loanType,
+        source: newEnquiry.source,
         createdAt: newEnquiry.createdAt
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get Homepage Enquiries (Admin)
+// @route   GET /api/admin/enquiries/homepage
+// @access  Private (Admin)
+const getHomepageEnquiries = async (req, res, next) => {
+  try {
+    const {
+      status,
+      loanType,
+      search,
+      startDate,
+      endDate,
+      page = 1,
+      limit = 10,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    const query = {
+      source: { $in: ['homepage', 'Homepage'] },
+      isDeleted: false
+    };
+
+    // Filter by Loan Type
+    if (loanType && loanType !== 'all') {
+      query.loanType = loanType;
+    }
+
+    // Filter by Status
+    if (status && ENQUIRY_STATUSES.includes(status)) {
+      query.status = status;
+    }
+
+    // Date Range Filter
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = end;
+      }
+    }
+
+    // Search Filter across Name, Mobile, Email, EnquiryID, Requirement
+    if (search && search.trim() !== '') {
+      const searchRegex = new RegExp(search.trim(), 'i');
+      query.$or = [
+        { fullName: searchRegex },
+        { mobileNumber: searchRegex },
+        { email: searchRegex },
+        { enquiryId: searchRegex },
+        { requirement: searchRegex }
+      ];
+    }
+
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 10;
+    const skip = (pageNum - 1) * limitNum;
+    const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
+
+    const [enquiries, total] = await Promise.all([
+      Enquiry.find(query).sort(sort).skip(skip).limit(limitNum),
+      Enquiry.countDocuments(query)
+    ]);
+
+    // Compute status counts for Homepage enquiries
+    const statusCounts = await Enquiry.aggregate([
+      { $match: { source: { $in: ['homepage', 'Homepage'] }, isDeleted: false } },
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+
+    const countsMap = {
+      Total: total,
+      New: 0,
+      Contacted: 0,
+      'In Progress': 0,
+      Converted: 0,
+      Closed: 0
+    };
+    statusCounts.forEach(sc => {
+      countsMap[sc._id] = sc.count;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        enquiries,
+        pagination: {
+          total,
+          page: pageNum,
+          limit: limitNum,
+          totalPages: Math.ceil(total / limitNum)
+        },
+        counts: countsMap
       }
     });
   } catch (error) {
@@ -174,6 +314,7 @@ const getEnquiriesByLoanType = async (req, res, next) => {
 
     const query = {
       loanType,
+      source: { $nin: ['homepage', 'Homepage'] },
       isDeleted: false
     };
 
@@ -220,7 +361,7 @@ const getEnquiriesByLoanType = async (req, res, next) => {
 
     // Compute status counts for this specific loan type
     const statusCounts = await Enquiry.aggregate([
-      { $match: { loanType, isDeleted: false } },
+      { $match: { loanType, source: { $nin: ['homepage', 'Homepage'] }, isDeleted: false } },
       { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
 
@@ -378,11 +519,149 @@ const deleteEnquiry = async (req, res, next) => {
   }
 };
 
+// @desc    Get Unread Enquiry Counts (Admin)
+// @route   GET /api/enquiries/admin/unread-counts
+// @access  Private (Admin)
+const getUnreadCounts = async (req, res, next) => {
+  try {
+    const unreadAggregate = await Enquiry.aggregate([
+      {
+        $match: {
+          isDeleted: false,
+          isRead: false
+        }
+      },
+      {
+        $group: {
+          _id: {
+            loanType: '$loanType',
+            isHomepage: {
+              $in: [{ $toLower: '$source' }, ['homepage']]
+            }
+          },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const counts = {
+      homepage: 0,
+      'personal-loan': 0,
+      'loan-against-securities': 0,
+      'business-loan': 0,
+      'home-loan': 0,
+      'loan-against-property': 0,
+      'education-loan': 0,
+      'gold-loan': 0,
+      'vehicle-loan': 0
+    };
+
+    let totalUnread = 0;
+    let unreadHomepage = 0;
+    let unreadLoans = 0;
+
+    unreadAggregate.forEach(item => {
+      const isHome = item._id.isHomepage;
+      const count = item.count;
+      totalUnread += count;
+
+      if (isHome) {
+        counts.homepage += count;
+        unreadHomepage += count;
+      } else {
+        const loanKey = item._id.loanType;
+        if (counts.hasOwnProperty(loanKey)) {
+          counts[loanKey] += count;
+        }
+        unreadLoans += count;
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        counts,
+        totalUnread,
+        unreadHomepage,
+        unreadLoans,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Mark Enquiries as Read (Admin)
+// @route   PATCH /api/enquiries/admin/mark-read
+// @access  Private (Admin)
+const markEnquiriesAsRead = async (req, res, next) => {
+  try {
+    const { category, cutoffTime } = req.body;
+
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: 'Category is required (e.g. "homepage" or loan category slug)'
+      });
+    }
+
+    const query = {
+      isDeleted: false,
+      isRead: false
+    };
+
+    // Cutoff time filter if supplied to avoid race conditions with enquiries arriving after page open
+    if (cutoffTime) {
+      const parsedCutoff = new Date(cutoffTime);
+      if (!isNaN(parsedCutoff.getTime())) {
+        query.createdAt = { $lte: parsedCutoff };
+      }
+    }
+
+    if (category === 'homepage') {
+      query.source = { $in: ['homepage', 'Homepage'] };
+    } else {
+      if (!LOAN_TYPES.includes(category)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid loan category: ${category}`
+        });
+      }
+      query.loanType = category;
+      query.source = { $nin: ['homepage', 'Homepage'] };
+    }
+
+    const now = new Date();
+    const result = await Enquiry.updateMany(query, {
+      $set: {
+        isRead: true,
+        readAt: now
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Enquiries for "${category}" marked as read`,
+      data: {
+        category,
+        markedCount: result.modifiedCount,
+        readAt: now
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get Overall Dashboard Statistics
 // @route   GET /api/admin/dashboard/stats
 // @access  Private (Admin)
 const getDashboardStats = async (req, res, next) => {
   try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
     const [
       totalEnquiries,
       newEnquiries,
@@ -391,7 +670,14 @@ const getDashboardStats = async (req, res, next) => {
       convertedEnquiries,
       closedEnquiries,
       recentEnquiries,
-      enquiriesByProduct
+      enquiriesByProduct,
+      totalHomepageEnquiries,
+      newHomepageEnquiries,
+      recentHomepageEnquiries,
+      totalUnreadEnquiries,
+      unreadHomepageEnquiries,
+      unreadLoanEnquiries,
+      newEnquiriesToday
     ] = await Promise.all([
       Enquiry.countDocuments({ isDeleted: false }),
       Enquiry.countDocuments({ isDeleted: false, status: 'New' }),
@@ -403,14 +689,19 @@ const getDashboardStats = async (req, res, next) => {
       Enquiry.aggregate([
         { $match: { isDeleted: false } },
         { $group: { _id: '$loanType', count: { $sum: 1 } } }
-      ])
+      ]),
+      Enquiry.countDocuments({ isDeleted: false, source: { $in: ['homepage', 'Homepage'] } }),
+      Enquiry.countDocuments({ isDeleted: false, source: { $in: ['homepage', 'Homepage'] }, status: 'New' }),
+      Enquiry.find({ isDeleted: false, source: { $in: ['homepage', 'Homepage'] } }).sort({ createdAt: -1 }).limit(5),
+      Enquiry.countDocuments({ isDeleted: false, isRead: false }),
+      Enquiry.countDocuments({ isDeleted: false, isRead: false, source: { $in: ['homepage', 'Homepage'] } }),
+      Enquiry.countDocuments({ isDeleted: false, isRead: false, source: { $nin: ['homepage', 'Homepage'] } }),
+      Enquiry.countDocuments({ isDeleted: false, createdAt: { $gte: todayStart } })
     ]);
 
     const Loan = require('../models/Loan');
-    const { Blog } = require('../models/Blog');
 
     const totalLoans = await Loan.countDocuments();
-    const publishedBlogs = await Blog.countDocuments({ isPublished: true });
 
     res.json({
       success: true,
@@ -422,9 +713,15 @@ const getDashboardStats = async (req, res, next) => {
         convertedEnquiries,
         closedEnquiries,
         totalLoans,
-        publishedBlogs,
         recentEnquiries,
-        enquiriesByProduct
+        enquiriesByProduct,
+        totalHomepageEnquiries,
+        newHomepageEnquiries,
+        recentHomepageEnquiries,
+        totalUnreadEnquiries,
+        unreadHomepageEnquiries,
+        unreadLoanEnquiries,
+        newEnquiriesToday
       }
     });
   } catch (error) {
@@ -434,10 +731,13 @@ const getDashboardStats = async (req, res, next) => {
 
 module.exports = {
   submitEnquiry,
+  getHomepageEnquiries,
   getEnquiriesByLoanType,
   getEnquiryById,
   updateEnquiryStatus,
   addEnquiryNote,
   deleteEnquiry,
-  getDashboardStats
+  getDashboardStats,
+  getUnreadCounts,
+  markEnquiriesAsRead
 };

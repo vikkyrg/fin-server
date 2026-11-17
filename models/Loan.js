@@ -13,7 +13,8 @@ const LoanSchema = new mongoose.Schema({
       'home-loan',
       'loan-against-property',
       'education-loan',
-      'gold-loan'
+      'gold-loan',
+      'vehicle-loan'
     ]
   },
   name: {

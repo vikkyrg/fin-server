@@ -7,7 +7,8 @@ const LOAN_TYPES = [
   'home-loan',
   'loan-against-property',
   'education-loan',
-  'gold-loan'
+  'gold-loan',
+  'vehicle-loan'
 ];
 
 const ENQUIRY_STATUSES = [
@@ -27,8 +28,19 @@ const EnquirySchema = new mongoose.Schema({
   loanType: {
     type: String,
     required: [true, 'Loan type is required'],
-    enum: LOAN_TYPES,
+    enum: [...LOAN_TYPES, 'other'],
     index: true
+  },
+  source: {
+    type: String,
+    enum: ['homepage', 'loandetail', 'modal', 'general', 'Homepage', 'LoanDetail', 'Modal', 'General'],
+    default: 'loandetail',
+    lowercase: true,
+    index: true
+  },
+  requirement: {
+    type: String,
+    trim: true
   },
   // Common Fields
   fullName: {
@@ -132,6 +144,19 @@ const EnquirySchema = new mongoose.Schema({
     },
     goldPurity: {
       type: String // e.g. "18K", "20K", "22K", "24K"
+    },
+
+    // Vehicle Loan
+    vehicleType: {
+      type: String,
+      enum: ['New Car', 'Pre-Owned Car', 'Electric Vehicle (EV)', 'Commercial Vehicle', 'Two Wheeler', 'Other', '']
+    },
+    vehicleModel: {
+      type: String,
+      trim: true
+    },
+    onRoadPrice: {
+      type: Number
     }
   },
 
@@ -149,6 +174,15 @@ const EnquirySchema = new mongoose.Schema({
       addedAt: { type: Date, default: Date.now }
     }
   ],
+  isRead: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  readAt: {
+    type: Date,
+    default: null
+  },
   isDeleted: {
     type: Boolean,
     default: false,

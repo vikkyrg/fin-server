@@ -371,6 +371,50 @@ const DEFAULT_LOAN_PRODUCTS = [
       { question: 'What happens if gold market prices drop significantly?', answer: 'Under RBI guidelines, if market prices fall significantly, the lender may request a small margin adjustment or part-payment to maintain the mandatory 75% LTV.' }
     ],
     isPublished: true
+  },
+  {
+    slug: 'vehicle-loan',
+    name: 'Vehicle Loan',
+    tagline: 'Financing for new and used cars with flexible tenures and competitive interest rates',
+    icon: 'CarFront',
+    heroImage: 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&w=1200&q=80',
+    orderIndex: 8,
+    indicativeInterestRate: '8.75% - 14.50% p.a.',
+    maxTenure: 'Up to 7 Years',
+    maxLoanAmount: 'Up to ₹1.5 Crores',
+    processingFee: '0.5% - 1.5% + GST',
+    shortDescription: 'Financing for new and used cars with flexible tenures and competitive interest rates.',
+    overview: 'A Vehicle Loan provides tailored financing solutions to help you purchase your dream new car, certified pre-owned vehicle, or commercial vehicle. With financing up to 100% on-road funding from top partner banks, minimal documentation, instant digital sanctions, and extended repayment tenures up to 7 years, drive home your preferred vehicle with complete peace of mind.',
+    keyBenefits: [
+      { title: 'Up to 100% On-Road Funding', description: 'Comprehensive finance covering ex-showroom price, registration, and insurance.' },
+      { title: 'Flexible Tenures Up to 7 Years', description: 'Structure manageable monthly EMIs spanning 12 to 84 months.' },
+      { title: 'Multi-Bank Interest Comparison', description: 'Access competitive interest rates from 20+ leading banks and NBFCs.' },
+      { title: 'Fast Digital Approvals', description: 'Minimal documentation with doorstep or branch delivery support.' }
+    ],
+    features: [
+      { title: 'Fixed Interest Rates', description: 'Predictable monthly EMIs throughout the loan tenure unaffected by market volatility.' },
+      { title: 'Dealership Coordination', description: 'Direct disbursal and tie-up with authorized automobile dealerships across India.' }
+    ],
+    eligibilityCriteria: [
+      { criteria: 'Age Bracket', detail: '21 to 65 years' },
+      { criteria: 'Minimum Income', detail: '₹25,000 net monthly salary or profitable 2-year business ITR' },
+      { criteria: 'Credit Score', detail: 'CIBIL score of 700+ preferred' }
+    ],
+    requiredDocuments: [
+      { category: 'Basic KYC', items: ['Aadhaar Card', 'PAN Card', 'Valid Driving License'] },
+      { category: 'Income Proof', items: ['Latest 3 months salary slips or 2 years ITR', '6 months bank statements'] },
+      { category: 'Vehicle Invoice', items: ['Proforma Invoice from authorized car dealership'] }
+    ],
+    applicationProcess: [
+      { stepNumber: 1, stepTitle: 'Select Car & Loan Details', stepDescription: 'Provide car model details and required loan amount.' },
+      { stepNumber: 2, stepTitle: 'Bank Quote Matching', stepDescription: 'Compare interest rates and processing terms across partner banks.' },
+      { stepNumber: 3, stepTitle: 'Document Verification', stepDescription: 'Submit KYC and income documents for digital verification.' },
+      { stepNumber: 4, stepTitle: 'Dealer Disbursal', stepDescription: 'Funds disbursed directly to dealership for car delivery.' }
+    ],
+    faqs: [
+      { question: 'What is the maximum tenure for a vehicle loan?', answer: 'Vehicle loans are available for repayment tenures up to 7 years (84 months) for new cars and up to 5 years for used cars.' }
+    ],
+    isPublished: true
   }
 ];
 
@@ -378,7 +422,7 @@ const DEFAULT_LOAN_PRODUCTS = [
 const ensureLoansSeeded = async () => {
   if (mongoose.connection && mongoose.connection.readyState === 1) {
     const count = await Loan.countDocuments();
-    if (count < 7) {
+    if (count < 8) {
       for (const item of DEFAULT_LOAN_PRODUCTS) {
         await Loan.findOneAndUpdate(
           { slug: item.slug },
